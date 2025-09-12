@@ -1,0 +1,100 @@
+# This file defines a 2-tier architecture using the same generic microservice.
+# 1. A 'tier-1' service that receives external traffic.
+# 2. A 'tier-2' service that is only called by tier-1.
+
+# --- TIER-1 DEPLOYMENT (FORMERLY FRONTEND) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tier-1-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tier-1
+  template:
+    metadata:
+      labels:
+        app: tier-1
+    spec:
+      containers:
+      - name: app
+        # Make sure this is the correct name of your image
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "tier-1"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.05" # Tier-1 simulates a small amount of work, 50ms
+        - name: OUTBOUND_CALLS
+          # Always makes a synchronous call to the 'tier-2-svc' service
+          value: "SYNC:tier-2-svc:1.0"
+        - name: GUNICORN_WORKERS
+          value: "2"
+        - name: GUNICORN_THREADS
+          value: "4"
+
+---
+# --- TIER-1 SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tier-1-svc
+spec:
+  selector:
+    app: tier-1
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+
+---
+# --- TIER-2 DEPLOYMENT (FORMERLY BACKEND) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tier-2-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tier-2
+  template:
+    metadata:
+      labels:
+        app: tier-2
+    spec:
+      containers:
+      - name: app
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "tier-2"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.2" # Tier-2 simulates more work, 200ms
+        - name: OUTBOUND_CALLS
+          value: "" # Tier-2 calls no other services
+        - name: GUNICORN_WORKERS
+          value: "2"
+        - name: GUNICORN_THREADS
+          value: "4"
+
+---
+# --- TIER-2 SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tier-2-svc
+spec:
+  selector:
+    app: tier-2
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+
+

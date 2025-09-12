@@ -1,0 +1,144 @@
+# This file defines a fan-out architecture with probabilistic routing.
+# 1. An 'entry-svc' that receives external traffic.
+# 2. This service then calls one of two backend services with a 50/50 probability.
+
+# --- ENTRYPOINT DEPLOYMENT ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: entry-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: entry
+  template:
+    metadata:
+      labels:
+        app: entry
+    spec:
+      containers:
+      - name: app
+        # Make sure this is the correct name of your image
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "entry-svc"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.02" # Entry service does minimal work, 20ms
+        - name: OUTBOUND_CALLS
+          # KEY CONFIGURATION: Call backend-a 50% of the time, or backend-b 50% of the time.
+          value: "SYNC:backend-a-svc:0.5,SYNC:backend-b-svc:0.5"
+        - name: GUNICORN_WORKERS
+          value: "2"
+        - name: GUNICORN_THREADS
+          value: "4"
+
+---
+# --- ENTRYPOINT SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: entry-svc
+spec:
+  selector:
+    app: entry
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+
+---
+# --- BACKEND 'A' DEPLOYMENT ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-a-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-a
+  template:
+    metadata:
+      labels:
+        app: backend-a
+    spec:
+      containers:
+      - name: app
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "backend-a"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.1" # Backend 'a' simulates 100ms of work
+        - name: OUTBOUND_CALLS
+          value: "" # This service calls no others
+        - name: GUNICORN_WORKERS
+          value: "1"
+        - name: GUNICORN_THREADS
+          value: "2"
+
+---
+# --- BACKEND 'A' SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-a-svc
+spec:
+  selector:
+    app: backend-a
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+
+---
+# --- BACKEND 'B' DEPLOYMENT ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-b-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-b
+  template:
+    metadata:
+      labels:
+        app: backend-b
+    spec:
+      containers:
+      - name: app
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "backend-b"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.15" # Backend 'b' simulates 150ms of work to be different
+        - name: OUTBOUND_CALLS
+          value: "" # This service calls no others
+        - name: GUNICORN_WORKERS
+          value: "1"
+        - name: GUNICORN_THREADS
+          value: "2"
+---
+# --- BACKEND 'B' SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-b-svc
+spec:
+  selector:
+    app: backend-b
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
