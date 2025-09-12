@@ -1,21 +1,21 @@
-# This file defines a 2-tier architecture using the same generic microservice.
-# 1. A 'tier-1' service that receives external traffic.
-# 2. A 'tier-2' service that is only called by tier-1.
+# This file defines a 2-tier architecture using the standardized 'entry-svc' name.
+# 1. An 'entry' service that receives external traffic.
+# 2. A 'backend' service that is only called by the entry service.
 
-# --- TIER-1 DEPLOYMENT (FORMERLY FRONTEND) ---
+# --- ENTRYPOINT DEPLOYMENT ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tier-1-deployment
+  name: entry-deployment
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: tier-1
+      app: entry
   template:
     metadata:
       labels:
-        app: tier-1
+        app: entry
     spec:
       containers:
       - name: app
@@ -25,46 +25,47 @@ spec:
         - containerPort: 8080
         env:
         - name: SERVICE_NAME
-          value: "tier-1"
+          value: "entry-svc"
         - name: SERVICE_TIME_SECONDS
-          value: "0.05" # Tier-1 simulates a small amount of work, 50ms
+          value: "0.05" # Entry service simulates a small amount of work, 50ms
         - name: OUTBOUND_CALLS
-          # Always makes a synchronous call to the 'tier-2-svc' service
-          value: "SYNC:tier-2-svc:1.0"
+          # Always makes a synchronous call to the 'backend-svc' service
+          value: "SYNC:backend-svc:1.0"
         - name: GUNICORN_WORKERS
           value: "2"
         - name: GUNICORN_THREADS
           value: "4"
 
 ---
-# --- TIER-1 SERVICE ---
+# --- ENTRYPOINT SERVICE ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: tier-1-svc
+  name: entry-svc
 spec:
   selector:
-    app: tier-1
+    app: entry
   ports:
-  - protocol: TCP
+  - name: http
+    protocol: TCP
     port: 80
     targetPort: 8080
 
 ---
-# --- TIER-2 DEPLOYMENT (FORMERLY BACKEND) ---
+# --- BACKEND DEPLOYMENT ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tier-2-deployment
+  name: backend-deployment
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: tier-2
+      app: backend
   template:
     metadata:
       labels:
-        app: tier-2
+        app: backend
     spec:
       containers:
       - name: app
@@ -73,28 +74,28 @@ spec:
         - containerPort: 8080
         env:
         - name: SERVICE_NAME
-          value: "tier-2"
+          value: "backend"
         - name: SERVICE_TIME_SECONDS
-          value: "0.2" # Tier-2 simulates more work, 200ms
+          value: "0.2" # Backend simulates more work, 200ms
         - name: OUTBOUND_CALLS
-          value: "" # Tier-2 calls no other services
+          value: "" # This service calls no other services
         - name: GUNICORN_WORKERS
           value: "2"
         - name: GUNICORN_THREADS
           value: "4"
 
 ---
-# --- TIER-2 SERVICE ---
+# --- BACKEND SERVICE ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: tier-2-svc
+  name: backend-svc
 spec:
   selector:
-    app: tier-2
+    app: backend
   ports:
-  - protocol: TCP
+  - name: http
+    protocol: TCP
     port: 80
     targetPort: 8080
-
 

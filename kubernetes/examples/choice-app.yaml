@@ -1,6 +1,6 @@
-# This file defines a fan-out architecture with probabilistic routing.
-# 1. An 'entry-svc' that receives external traffic.
-# 2. This service then calls one of two backend services with a 50/50 probability.
+# This file defines a probabilistic routing architecture.
+# 1. An 'entry' service receives external traffic.
+# 2. It then routes requests to one of two backend services with a 50/50 probability.
 
 # --- ENTRYPOINT DEPLOYMENT ---
 apiVersion: apps/v1
@@ -27,7 +27,7 @@ spec:
         - name: SERVICE_NAME
           value: "entry-svc"
         - name: SERVICE_TIME_SECONDS
-          value: "0.02" # Entry service does minimal work, 20ms
+          value: "0.02" # Entry service simulates minimal work, 20ms
         - name: OUTBOUND_CALLS
           # KEY CONFIGURATION: Call backend-a 50% of the time, or backend-b 50% of the time.
           value: "SYNC:backend-a-svc:0.5,SYNC:backend-b-svc:0.5"
@@ -46,7 +46,8 @@ spec:
   selector:
     app: entry
   ports:
-  - protocol: TCP
+  - name: http
+    protocol: TCP
     port: 80
     targetPort: 8080
 
@@ -93,7 +94,8 @@ spec:
   selector:
     app: backend-a
   ports:
-  - protocol: TCP
+  - name: http
+    protocol: TCP
     port: 80
     targetPort: 8080
 
@@ -139,6 +141,7 @@ spec:
   selector:
     app: backend-b
   ports:
-  - protocol: TCP
+  - name: http
+    protocol: TCP
     port: 80
     targetPort: 8080
