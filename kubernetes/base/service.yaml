@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: generic-service-svc
+spec:
+  selector:
+    app: generic-service # This must match the 'app' label in the Deployment
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+

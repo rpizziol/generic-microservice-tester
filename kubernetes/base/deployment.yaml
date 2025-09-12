@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: generic-service # We will change this name for each instance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: generic-service
+  template:
+    metadata:
+      labels:
+        app: generic-service # This label is used by the Service
+    spec:
+      containers:
+      - name: app
+        # IMPORTANT: Replace this with the actual name of your Docker image
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "generic-service"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.1" # Default busy-wait time of 100ms
+        - name: OUTBOUND_CALLS
+          value: "" # Default: no outbound calls
+        - name: GUNICORN_WORKERS
+          value: "2" # Default: 2 worker processes
+        - name: GUNICORN_THREADS
+          value: "4" # Default: 4 threads per worker
+
