@@ -1,0 +1,145 @@
+# This file defines a 3-tier chain architecture:
+# 1. An 'entry' service receives external traffic.
+# 2. It makes a synchronous call to a 'middle' service.
+# 3. The 'middle' service then makes a synchronous call to a 'backend' service.
+
+# --- BACKEND DEPLOYMENT (Tier 3) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: app
+        image: rpizziol/generic-microservice-tester:latest # Your image
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "backend"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.2" # Simulate 200ms of work
+        - name: OUTBOUND_CALLS
+          value: "" # <-- KEY: This service calls no others
+        - name: GUNICORN_WORKERS
+          value: "1"
+        - name: GUNICORN_THREADS
+          value: "2"
+---
+# --- BACKEND SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-svc
+spec:
+  selector:
+    app: backend
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 8080
+
+---
+# --- MIDDLE DEPLOYMENT (Tier 2) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: middle-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: middle
+  template:
+    metadata:
+      labels:
+        app: middle
+    spec:
+      containers:
+      - name: app
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "middle"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.1" # Simulate 100ms of work
+        - name: OUTBOUND_CALLS
+          value: "SYNC:backend-svc:1.0" # <-- KEY: Always calls backend-svc
+        - name: GUNICORN_WORKERS
+          value: "1"
+        - name: GUNICORN_THREADS
+          value: "2"
+---
+# --- MIDDLE SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: middle-svc
+spec:
+  selector:
+    app: middle
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 8080
+
+---
+# --- ENTRY DEPLOYMENT (Tier 1) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: entry-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: entry
+  template:
+    metadata:
+      labels:
+        app: entry
+    spec:
+      containers:
+      - name: app
+        image: rpizziol/generic-microservice-tester:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: "entry"
+        - name: SERVICE_TIME_SECONDS
+          value: "0.05" # Simulate 50ms of work
+        - name: OUTBOUND_CALLS
+          value: "SYNC:middle-svc:1.0" # <-- KEY: Always calls middle-svc
+        - name: GUNICORN_WORKERS
+          value: "2"
+        - name: GUNICORN_THREADS
+          value: "4"
+---
+# --- ENTRY SERVICE ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: entry-svc
+spec:
+  selector:
+    app: entry
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 8080
+
