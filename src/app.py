@@ -25,8 +25,8 @@ def do_work():
         service_time_str = os.environ.get('SERVICE_TIME_SECONDS', '0')
         service_time = float(service_time_str)
         if service_time > 0:
-            start_time = time.monotonic()
-            while time.monotonic() - start_time < service_time:
+            start_time = time.thread_time()
+            while time.thread_time() - start_time < service_time:
                 # This loop actively consumes CPU cycles
                 pass
             print(f"Completed busy-wait for {service_time} seconds.")
