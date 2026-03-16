@@ -225,7 +225,7 @@ def _get_busy_wait_lib():
         pathlib.Path(__file__).parent / "busy_wait.so",
     ]:
         if candidate.exists():
-            _BUSY_WAIT_LIB = ctypes.CDLL(str(candidate))
+            _BUSY_WAIT_LIB = ctypes.CDLL(str(candidate.resolve()))
             _BUSY_WAIT_LIB.busy_wait_cpu.argtypes = [ctypes.c_double]
             _BUSY_WAIT_LIB.busy_wait_cpu.restype = None
             return _BUSY_WAIT_LIB
