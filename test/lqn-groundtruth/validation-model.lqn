@@ -1,0 +1,42 @@
+G
+"validation-model"
+0.0001
+500
+1
+0.5
+-1
+
+P 0
+p PClient f i
+p PServer f m 1
+p PLeaf f m 1
+-1
+
+T 0
+t TClient r client -1 PClient z 2.0 m 1
+t TServer n process -1 PServer m 1
+t TLeaf n compute -1 PLeaf m 1
+-1
+
+E 0
+s client 0.0 -1
+y client process 1.0 -1
+A process start
+s compute 0.01 -1
+-1
+
+A TServer
+s start 0.01
+s fast 0.02
+s slow 0.03
+s work_a 0.02
+s work_b 0.01
+s finish 0.005
+y finish compute 1.0
+:
+start -> (0.7)fast + (0.3)slow;
+fast[process];
+slow -> work_a & work_b;
+work_a & work_b -> finish;
+finish[process]
+-1
