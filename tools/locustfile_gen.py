@@ -17,13 +17,61 @@ import sys
 from pathlib import Path
 
 try:
-    from gmt.lqn_parser import LqnModel, parse_lqn_file
+    from gmt.lqn_parser import LqnModel, LqnTask, parse_lqn_file
     from gmt.tools.lqn_compiler import resolve_call_target
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     sys.path.insert(0, str(Path(__file__).parent))
-    from lqn_parser import LqnModel, parse_lqn_file
+    from lqn_parser import LqnModel, LqnTask, parse_lqn_file
     from lqn_compiler import resolve_call_target
+
+
+def _extract_activity_calls(
+    task: LqnTask,
+) -> list[tuple[str, float, str]]:
+    """Walk the activity graph of a task and extract all sync/async calls.
+
+    Returns list of (target_entry, mean_calls, call_type) from all activities
+    reachable via DFS from each entry's start_activity.
+    """
+    calls: list[tuple[str, float, str]] = []
+    visited: set[str] = set()
+
+    def dfs(activity_name: str) -> None:
+        if activity_name in visited or activity_name not in task.activities:
+            return
+        visited.add(activity_name)
+
+        act = task.activities[activity_name]
+        for target_entry, mean_calls in act.sync_calls:
+            calls.append((target_entry, mean_calls, "sync"))
+        for target_entry, mean_calls in act.async_calls:
+            calls.append((target_entry, mean_calls, "async"))
+
+        # Follow graph edges
+        graph = task.activity_graph
+        if not graph:
+            return
+        for src, dst in graph.sequences:
+            if src == activity_name:
+                dfs(dst)
+        for src, branches in graph.and_forks:
+            if src == activity_name:
+                for b in branches:
+                    dfs(b)
+        for branches, dst in graph.and_joins:
+            if activity_name in branches:
+                dfs(dst)
+        for src, branch_list in graph.or_forks:
+            if src == activity_name:
+                for _, name in branch_list:
+                    dfs(name)
+
+    for entry in task.entries:
+        if entry.start_activity:
+            dfs(entry.start_activity)
+
+    return calls
 
 
 def _resolve_url(model: LqnModel, entry_name: str) -> str | None:
@@ -107,12 +155,24 @@ def generate_locustfile(model: LqnModel) -> str:
     think_time = ref.think_time
     multiplicity = ref.multiplicity
 
-    # Collect all calls from all entries of the reference task
+    # Collect all calls from the reference task.
+    # Phase-based entries have calls in phase_sync_calls/phase_async_calls.
+    # Activity-based entries have calls in the activity objects — walk the graph.
     all_calls: list[tuple[str, float, str]] = []
     for entry in ref.entries:
-        all_calls.extend(
-            _build_call_list(model, entry.phase_sync_calls, entry.phase_async_calls)
+        phase_calls = _build_call_list(
+            model, entry.phase_sync_calls, entry.phase_async_calls
         )
+        if phase_calls:
+            all_calls.extend(phase_calls)
+
+    if not all_calls:
+        # Try activity-based extraction (DFS over activity graph)
+        activity_calls = _extract_activity_calls(ref)
+        for target_entry, mean_calls, call_type in activity_calls:
+            url = _resolve_url(model, target_entry)
+            if url and mean_calls > 0:
+                all_calls.append((url, mean_calls, call_type))
 
     call_block = _generate_call_block(all_calls)
 
