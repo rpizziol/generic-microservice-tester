@@ -163,19 +163,40 @@ def get_processor_multiplicity(model: LqnModel, proc_name: str) -> int | None:
     return None
 
 
+def find_entry_point_task(model: LqnModel) -> str | None:
+    """Find the non-reference task called by the reference task (entry point).
+
+    Returns the K8s-safe name of the first task whose entry is called
+    by the reference task's sync calls. Returns None if no reference task.
+    """
+    for task in model.tasks:
+        if not task.is_reference:
+            continue
+        for entry in task.entries:
+            for target_entry in entry.phase_sync_calls or {}:
+                result = resolve_call_target(model, target_entry)
+                if result:
+                    svc_name = result[0].removesuffix("-svc")
+                    return svc_name
+    return None
+
+
 def generate_deployment_yaml(
     task: LqnTask,
     model: LqnModel,
     image: str,
     namespace: str | None,
 ) -> str:
-    """Generate K8s Deployment YAML for a task."""
+    """Generate K8s Deployment YAML for a task (OTEL-compliant)."""
     k8s_name = task_to_k8s_name(task.name)
     config = build_task_config(task, model)
     config_json = json.dumps(config, separators=(",", ":"))
 
     proc_mult = get_processor_multiplicity(model, task.processor)
-    cpu_request = f"{proc_mult * 100}m" if proc_mult and proc_mult < 100 else "500m"
+    cpu_req = max(proc_mult * 100, 500) if proc_mult else 500
+    cpu_lim = max(proc_mult * 1000, 1000) if proc_mult else 1000
+    cpu_request = f"{cpu_req}m"
+    cpu_limit = f"{cpu_lim}m"
 
     ns_line = f"\n  namespace: {namespace}" if namespace else ""
 
@@ -196,6 +217,8 @@ spec:
     metadata:
       labels:
         app: {k8s_name}
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "true"
     spec:
       containers:
       - name: app
@@ -205,11 +228,23 @@ spec:
         resources:
           requests:
             cpu: "{cpu_request}"
+            memory: "256Mi"
           limits:
-            cpu: "{cpu_request}"
+            cpu: "{cpu_limit}"
+            memory: "512Mi"
         env:
         - name: SERVICE_NAME
           value: "{k8s_name}"
+        - name: OTEL_SERVICE_NAME
+          value: "{k8s_name}"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector.observability:4317"
+        - name: OTEL_TRACES_EXPORTER
+          value: "otlp"
+        - name: OTEL_METRICS_EXPORTER
+          value: "none"
+        - name: OTEL_LOGS_EXPORTER
+          value: "none"
         - name: GUNICORN_WORKERS
           value: "{task.multiplicity}"
         - name: LQN_TASK_CONFIG
@@ -219,37 +254,52 @@ spec:
 def generate_service_yaml(
     task: LqnTask,
     namespace: str | None,
+    is_entry_point: bool = False,
+    node_port: int | None = None,
 ) -> str:
-    """Generate K8s Service YAML for a task."""
+    """Generate K8s Service YAML for a task.
+
+    If is_entry_point is True, generates a NodePort service for external access.
+    """
     k8s_name = task_to_k8s_name(task.name)
     ns_line = f"\n  namespace: {namespace}" if namespace else ""
+
+    type_line = "\n  type: NodePort" if is_entry_point else ""
+    np_line = f"\n    nodePort: {node_port}" if is_entry_point and node_port else ""
 
     return f"""apiVersion: v1
 kind: Service
 metadata:
   name: {k8s_name}-svc{ns_line}
-spec:
+spec:{type_line}
   selector:
     app: {k8s_name}
   ports:
   - port: 80
-    targetPort: 8080"""
+    targetPort: 8080{np_line}"""
 
 
 def compile_model(
     model: LqnModel,
     image: str = "generic-microservice-tester:latest",
     namespace: str | None = None,
+    node_port: int | None = None,
 ) -> str:
-    """Compile an LQN model to K8s YAML manifests."""
+    """Compile an LQN model to K8s YAML manifests (OTEL-compliant)."""
+    entry_point = find_entry_point_task(model)
     manifests = []
 
     for task in model.tasks:
         if task.is_reference:
             continue
 
+        k8s_name = task_to_k8s_name(task.name)
+        is_entry = k8s_name == entry_point
+
         deployment = generate_deployment_yaml(task, model, image, namespace)
-        service = generate_service_yaml(task, namespace)
+        service = generate_service_yaml(
+            task, namespace, is_entry_point=is_entry, node_port=node_port if is_entry else None
+        )
         manifests.append(deployment)
         manifests.append(service)
 
@@ -271,11 +321,17 @@ def main():
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be generated"
     )
+    parser.add_argument(
+        "--nodeport", type=int, default=None,
+        help="Fixed NodePort for entry-point service (default: K8s auto-assign)",
+    )
 
     args = parser.parse_args()
 
     model = parse_lqn_file(args.lqn_file)
-    yaml_output = compile_model(model, image=args.image, namespace=args.namespace)
+    yaml_output = compile_model(
+        model, image=args.image, namespace=args.namespace, node_port=args.nodeport
+    )
 
     if args.dry_run:
         print(f"# Would generate manifests for: {model.name}")
