@@ -20,6 +20,8 @@ runtime = [
 [project.scripts]
 lqn-compile = "gmt.tools.lqn_compiler:main"
 lqsim-run = "gmt.tools.lqsim_runner:main"
+lqn-locustfile = "gmt.tools.locustfile_gen:main"
+lqn-deploy = "gmt.tools.deploy_gen:main"
 
 [tool.setuptools.package-dir]
 "gmt" = "src"
