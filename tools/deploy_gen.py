@@ -38,6 +38,7 @@ def generate_deploy_script(
     model_path: str,
     image: str = "bistrulli/generic-microservice-tester:latest",
     namespace: str | None = None,
+    node_port: int | None = None,
 ) -> str:
     """Generate a deploy.sh script for a given LQN model.
 
@@ -57,8 +58,8 @@ def generate_deploy_script(
     if namespace is None:
         namespace = f"gmt-{_sanitize_name(model.name)}"
 
-    # Generate K8s manifests
-    manifests = compile_model(model, image=image, namespace=namespace)
+    # Generate K8s manifests (OTEL-compliant)
+    manifests = compile_model(model, image=image, namespace=namespace, node_port=node_port)
 
     # Generate locustfile
     locustfile = generate_locustfile(model)
@@ -85,15 +86,36 @@ NAMESPACE="{namespace}"
 cmd_up() {{
     echo "=== Deploying {model.name} to namespace $NAMESPACE ==="
 
-    echo "[1/3] Creating namespace..."
+    echo "[1/5] Verifying observability stack..."
+    if ! kubectl get namespace observability &>/dev/null; then
+        echo "WARNING: namespace 'observability' not found. OTEL tracing will not work."
+    fi
+
+    echo "[2/5] Creating namespace..."
     kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-    echo "[2/3] Applying manifests..."
+    echo "[3/5] Applying OTEL Instrumentation CR..."
+    cat <<'INSTREOF' | kubectl apply -n "$NAMESPACE" -f -
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: python-instrumentation
+spec:
+  exporter:
+    endpoint: http://otel-collector.observability:4317
+  propagators:
+  - tracecontext
+  - baggage
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:latest
+INSTREOF
+
+    echo "[4/5] Applying manifests..."
     cat <<'MANIFESTS' | kubectl apply -n "$NAMESPACE" -f -
 {manifests}
 MANIFESTS
 
-    echo "[3/3] Waiting for pods to be ready..."
+    echo "[5/5] Waiting for pods to be ready..."
     sleep 3
     kubectl wait --for=condition=Ready pod --all -n "$NAMESPACE" --timeout=300s
 
@@ -184,12 +206,17 @@ def main() -> None:
         help="Docker image for GMT containers",
     )
     parser.add_argument("--namespace", help="K8s namespace (default: gmt-<model>)")
+    parser.add_argument(
+        "--nodeport", type=int, default=None,
+        help="Fixed NodePort for entry-point service (default: K8s auto-assign)",
+    )
     parser.add_argument("-o", "--output", help="Output file (default: stdout)")
 
     args = parser.parse_args()
 
     script = generate_deploy_script(
-        args.lqn_file, image=args.image, namespace=args.namespace
+        args.lqn_file, image=args.image, namespace=args.namespace,
+        node_port=args.nodeport,
     )
 
     if args.output:
