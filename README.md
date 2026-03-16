@@ -24,19 +24,21 @@ The project is organized into three main directories to keep the source code, co
 │   ├── busy_wait.c         # C extension for GIL-releasing CPU busy-wait
 │   └── requirements.txt    # Python dependencies
 ├── tools/
-│   └── lqn_compiler.py     # LQN-to-K8s manifest compiler
+│   ├── lqn_compiler.py     # LQN-to-K8s manifest compiler
+│   ├── lqsim_runner.py     # lqsim wrapper: run simulations, parse .p output
+│   └── lqn_model_utils.py  # Parametric LQN model generation (e.g., change multiplicity)
 ├── docker/
 │   ├── Dockerfile          # Multi-stage build (gcc → python:3.12-slim)
 │   └── entrypoint.sh       # Gunicorn launcher
 ├── kubernetes/
 │   ├── base/               # Generic deployment + service templates
 │   └── examples/           # Ready-to-use topologies (2-tier, chain, choice)
-├── tests/                  # pytest test suite (171 tests)
+├── tests/                  # pytest test suite (171 unit + E2E)
 │   ├── unit/               # Parser, compiler, engine, trace validation
-│   ├── e2e/                # K8s deployment tests
+│   ├── e2e/                # Docker E2E (utilization, lqsim, closed-loop) + K8s topology
 │   └── helpers/            # Trace validator utility
 └── test/
-    └── lqn-groundtruth/    # Reference LQN models
+    └── lqn-groundtruth/    # Reference LQN models (template_annotated, validation-model)
 ```
 
 ## How to Use It: Creating Your Own Topology

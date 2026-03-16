@@ -44,7 +44,9 @@ generic-microservice-tester/
 │   ├── busy_wait.c         # C extension per busy-wait GIL-releasing (AND-fork)
 │   └── requirements.txt     # Dipendenze Python
 ├── tools/
-│   └── lqn_compiler.py     # Compilatore LQN → manifesti K8s
+│   ├── lqn_compiler.py     # Compilatore LQN → manifesti K8s
+│   ├── lqsim_runner.py     # Wrapper lqsim: esegue simulazioni e parsa output .p
+│   └── lqn_model_utils.py  # Utility per modelli LQN parametrici (es. cambio multiplicity)
 ├── docker/
 │   ├── Dockerfile          # Multi-stage build (gcc builder + python:3.12-slim runtime)
 │   └── entrypoint.sh       # Launcher Gunicorn
@@ -59,10 +61,10 @@ generic-microservice-tester/
 │       └── choice-app.yaml  # Routing probabilistico
 ├── tests/
 │   ├── unit/               # Test unitari (parser, compiler, engine, trace)
-│   ├── e2e/                # Test end-to-end K8s
+│   ├── e2e/                # Test E2E (Docker: utilization law, lqsim predictions, closed-loop; K8s: topology)
 │   └── helpers/            # Utility di validazione trace
 ├── test/
-│   └── lqn-groundtruth/    # Modelli LQN di riferimento
+│   └── lqn-groundtruth/    # Modelli LQN di riferimento (template_annotated, validation-model)
 ├── plan/                    # Piani di implementazione (per /orchestrate)
 ├── .claude/
 │   ├── settings.json        # Permessi e hook
@@ -91,6 +93,8 @@ generic-microservice-tester/
 | **Chiamate asincrone (ASYNC)** | `src/app.py` → `make_async_call_pooled()` | Fire-and-forget tramite `ThreadPoolExecutor` isolato per worker. Sessione HTTP dedicata, semantica LQN "send-no-reply". |
 | **Routing probabilistico** | `src/app.py` → `handle_legacy_request()` | Chiamate con probabilita' < 1.0 scelte con `random.choices` (weighted). Modalita' legacy. |
 | **Gunicorn launcher** | `docker/entrypoint.sh` | Configura workers, threads e worker-class sync per timing CPU accurato. |
+| **lqsim Runner** | `tools/lqsim_runner.py` | Wrapper per lqsim: esegue simulazioni, parsa output tabellare `.p` (throughput, service time, utilization per task). |
+| **LQN Model Utils** | `tools/lqn_model_utils.py` | Utility per generare modelli LQN parametrici (es. modifica multiplicity di un task reference per test a diversi livelli di carico). |
 
 ---
 
@@ -252,5 +256,5 @@ TYPE:SERVICE_NAME:PROBABILITY[,TYPE:SERVICE_NAME:PROBABILITY,...]
 - Ogni worker Gunicorn ha stato isolato (`_last_user_time`, `SESSION`, `ASYNC_SESSION`, `ASYNC_EXECUTOR`, `FORK_EXECUTOR`)
 - Il delta tracking gestisce automaticamente il restart dei worker
 - **Compilatore LQN**: `tools/lqn_compiler.py` traduce file `.lqn` in manifesti K8s con `LQN_TASK_CONFIG` serializzato
-- **Test suite**: 171 test (parser, compiler, engine, trace, validazione, E2E). Verifica formale via trace matching
+- **Test suite**: 171 unit test (parser, compiler, engine, trace, validazione) + E2E Docker (utilization law, lqsim predictions, closed-loop 50% utilization) + E2E K8s (topology). Verifica formale via trace matching
 - I manifest K8s in `kubernetes/examples/` sono pronti all'uso e autocontenuti (deployment + service)
