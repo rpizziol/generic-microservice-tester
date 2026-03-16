@@ -39,10 +39,14 @@ ruff format src/
 ```
 generic-microservice-tester/
 ├── src/
-│   ├── app.py              # App Flask principale (tempi di servizio stocastici, CPU psutil, chiamate async)
+│   ├── app.py              # App Flask (activity engine LQN + modalita' legacy)
+│   ├── lqn_parser.py       # Parser formato LQN V5 testuale
+│   ├── busy_wait.c         # C extension per busy-wait GIL-releasing (AND-fork)
 │   └── requirements.txt     # Dipendenze Python
+├── tools/
+│   └── lqn_compiler.py     # Compilatore LQN → manifesti K8s
 ├── docker/
-│   ├── Dockerfile          # Basato su python:3.12-slim
+│   ├── Dockerfile          # Multi-stage build (gcc builder + python:3.12-slim runtime)
 │   └── entrypoint.sh       # Launcher Gunicorn
 ├── kubernetes/
 │   ├── base/
@@ -53,6 +57,12 @@ generic-microservice-tester/
 │       ├── 2-tier-hpa.yaml  # 2 livelli con HPA
 │       ├── chain-app.yaml   # Catena di servizi
 │       └── choice-app.yaml  # Routing probabilistico
+├── tests/
+│   ├── unit/               # Test unitari (parser, compiler, engine, trace)
+│   ├── e2e/                # Test end-to-end K8s
+│   └── helpers/            # Utility di validazione trace
+├── test/
+│   └── lqn-groundtruth/    # Modelli LQN di riferimento
 ├── plan/                    # Piani di implementazione (per /orchestrate)
 ├── .claude/
 │   ├── settings.json        # Permessi e hook
@@ -69,13 +79,17 @@ generic-microservice-tester/
 
 | Componente | File | Descrizione |
 |---|---|---|
-| **Tempo di servizio stocastico** | `src/app.py` → `do_work()` | Distribuzione esponenziale con media configurabile via `SERVICE_TIME_SECONDS`. Ogni richiesta campiona un tempo di servizio diverso. |
-| **CPU delta tracking (psutil)** | `src/app.py` → `do_work()` | Tracciamento del tempo CPU user-space per processo. Usa delta tracking per isolare il consumo CPU di ogni singola richiesta nel worker Gunicorn persistente. |
-| **Busy-wait preciso** | `src/app.py` → `do_work()` | Consumo CPU effettivo tramite `time.process_time()`. Calcola il lavoro residuo sottraendo il tempo CPU ereditato dalle richieste precedenti. |
+| **LQN Parser** | `src/lqn_parser.py` | Parser completo del formato LQN V5 testuale. Produce dataclass `LqnModel` con processori, task, entry, activity e activity graph. |
+| **LQN Compiler** | `tools/lqn_compiler.py` | Compila file `.lqn` in manifesti K8s (Deployment + Service per task non-reference). Risolve target chiamate in nomi DNS K8s. |
+| **Activity Engine** | `src/app.py` → `execute_activity_graph()` | Interprete di activity diagram LQN: sequenze, AND-fork/join (parallelo), OR-fork (probabilistico), reply semantics. Usa `LQN_TASK_CONFIG` JSON. |
+| **C extension busy-wait** | `src/busy_wait.c` | Busy-wait CPU che rilascia il GIL tramite ctypes. Usa `CLOCK_THREAD_CPUTIME_ID` per timing per-thread. Abilita vero parallelismo nei branch AND-fork. |
+| **Execution tracing** | `src/app.py` → trace params | Ogni funzione del motore produce eventi strutturati (activity, and_fork, and_join, or_fork, reply, sync_call, async_call). Attivabile con `LQN_TRACE=1`. |
+| **Dry-run mode** | `src/app.py` → `LQN_DRY_RUN=1` | Esecuzione istantanea senza CPU e HTTP. Per testing e verifica formale. |
+| **Tempo di servizio stocastico** | `src/app.py` → `do_work()` | Distribuzione esponenziale con media configurabile via `SERVICE_TIME_SECONDS`. Modalita' legacy. |
+| **CPU delta tracking (psutil)** | `src/app.py` → `do_work()` | Tracciamento del tempo CPU user-space per processo con delta tracking. Modalita' legacy. |
 | **Chiamate sincrone (SYNC)** | `src/app.py` → `make_call()` | Chiamate HTTP bloccanti via `requests.Session` condivisa con connection pooling (100 connessioni). |
 | **Chiamate asincrone (ASYNC)** | `src/app.py` → `make_async_call_pooled()` | Fire-and-forget tramite `ThreadPoolExecutor` isolato per worker. Sessione HTTP dedicata, semantica LQN "send-no-reply". |
-| **Routing probabilistico** | `src/app.py` → `handle_request()` | Chiamate con probabilita' < 1.0 vengono scelte con `random.choices` (weighted). Chiamate con probabilita' >= 1.0 vengono sempre eseguite. |
-| **Parsing configurazione** | `src/app.py` → `parse_outbound_calls()` | Parsing di `OUTBOUND_CALLS` nel formato `TYPE:service_name:probability`. Separa chiamate fisse da probabilistiche. |
+| **Routing probabilistico** | `src/app.py` → `handle_legacy_request()` | Chiamate con probabilita' < 1.0 scelte con `random.choices` (weighted). Modalita' legacy. |
 | **Gunicorn launcher** | `docker/entrypoint.sh` | Configura workers, threads e worker-class sync per timing CPU accurato. |
 
 ---
@@ -88,10 +102,11 @@ Mappatura critica tra entita' LQN e costrutti Kubernetes/microservizio:
 |---|---|---|
 | **Processor** | Pod (resource limits `cpu`/`memory`) | — |
 | **Task** | Deployment (`replicas` = livello di concorrenza) | `GUNICORN_WORKERS` |
-| **Entry** | Endpoint HTTP (`/`) | `SERVICE_NAME` |
-| **Activity** | CPU busy-wait (distribuzione esponenziale) | `SERVICE_TIME_SECONDS` |
-| **Sync Call (y)** | Chiamata SYNC uscente (bloccante) | `OUTBOUND_CALLS` |
-| **Async Call (z)** | Chiamata ASYNC uscente (fire-and-forget) | `OUTBOUND_CALLS` |
+| **Entry** | Endpoint HTTP (`/<entry_name>`) | `LQN_TASK_CONFIG` (entries) |
+| **Activity** | CPU busy-wait (distribuzione esponenziale) via C extension | `LQN_TASK_CONFIG` (activities) |
+| **Activity Diagram** | Sequenze, AND-fork/join, OR-fork, reply | `LQN_TASK_CONFIG` (graph) |
+| **Sync Call (y)** | Chiamata SYNC uscente (bloccante) | `LQN_TASK_CONFIG` o `OUTBOUND_CALLS` |
+| **Async Call (z)** | Chiamata ASYNC uscente (fire-and-forget) | `LQN_TASK_CONFIG` o `OUTBOUND_CALLS` |
 | **Open Workload** | Generatore di carico esterno (e.g., k6, hey) | — |
 
 ### Esempio di traduzione LQN -> YAML
@@ -154,8 +169,17 @@ kubectl delete -f kubernetes/examples/2-tier-app.yaml
 # Test locale con curl
 curl http://localhost:8080/
 
+# Compilare modello LQN in manifesti K8s
+python tools/lqn_compiler.py test/lqn-groundtruth/template_annotated.lqn
+
+# Deploy da modello LQN
+python tools/lqn_compiler.py model.lqn | kubectl apply -f -
+
+# Eseguire test suite
+pytest tests/unit/ -v --tb=short
+
 # Linting
-ruff check src/
+ruff check src/ tools/ tests/
 ruff format --check src/
 
 # Installare dipendenze
@@ -202,6 +226,9 @@ pip install -r src/requirements.txt
 | `OUTBOUND_CALLS` | `""` | Chiamate HTTP uscenti. Formato: `TYPE:service:prob,...` | `SYNC:backend:0.6,ASYNC:logger:1.0` |
 | `GUNICORN_WORKERS` | `2` | Numero di worker processes Gunicorn | `4` |
 | `GUNICORN_THREADS` | `1` | Numero di thread per worker (1 = process-based per timing CPU accurato) | `1` |
+| `LQN_TASK_CONFIG` | `""` | JSON con configurazione task LQN (entries, activities, graph). Se presente, attiva modalita' LQN | `{"task_name":"T1",...}` |
+| `LQN_DRY_RUN` | `0` | Modalita' dry-run: `1` = skip CPU e HTTP, esecuzione istantanea | `1` |
+| `LQN_TRACE` | `0` | Abilita tracing strutturato nella response JSON | `1` |
 
 ### Formato OUTBOUND_CALLS
 
@@ -217,8 +244,13 @@ TYPE:SERVICE_NAME:PROBABILITY[,TYPE:SERVICE_NAME:PROBABILITY,...]
 
 ## Note per lo Sviluppo
 
-- Il busy-wait usa `time.process_time()` per misurare tempo CPU effettivo, non wall-clock time
-- Ogni worker Gunicorn ha stato isolato (`_last_user_time`, `SESSION`, `ASYNC_SESSION`, `ASYNC_EXECUTOR`)
+- **Due modalita' di funzionamento**: LQN (con `LQN_TASK_CONFIG`) e legacy (con `SERVICE_TIME_SECONDS` + `OUTBOUND_CALLS`)
+- **C extension**: `busy_wait.c` rilascia il GIL per vero parallelismo nei branch AND-fork. Compilato nel Docker multi-stage build
+- **Activity engine**: `execute_activity_graph()` cammina il grafo con cycle detection, validazione nomi, tracing strutturato
+- **AND-fork parallelismo**: `FORK_EXECUTOR` (ThreadPoolExecutor, 8 worker) + C extension per esecuzione parallela vera
+- Il busy-wait legacy usa `time.process_time()` per misurare tempo CPU effettivo, non wall-clock time
+- Ogni worker Gunicorn ha stato isolato (`_last_user_time`, `SESSION`, `ASYNC_SESSION`, `ASYNC_EXECUTOR`, `FORK_EXECUTOR`)
 - Il delta tracking gestisce automaticamente il restart dei worker
-- Le chiamate ASYNC usano un `ThreadPoolExecutor` separato per non interferire con il timing CPU del processo principale
+- **Compilatore LQN**: `tools/lqn_compiler.py` traduce file `.lqn` in manifesti K8s con `LQN_TASK_CONFIG` serializzato
+- **Test suite**: 171 test (parser, compiler, engine, trace, validazione, E2E). Verifica formale via trace matching
 - I manifest K8s in `kubernetes/examples/` sono pronti all'uso e autocontenuti (deployment + service)

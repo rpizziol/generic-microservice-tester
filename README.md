@@ -18,16 +18,26 @@ The project is organized into three main directories to keep the source code, co
 
 ```
 /
-├── src/            # Application source code (Python/Flask)
-├── docker/         # Docker-related files (Dockerfile, entrypoint script)
-└── kubernetes/     # Kubernetes YAML manifests
+├── src/
+│   ├── app.py              # Flask app (activity engine, tracing, legacy mode)
+│   ├── lqn_parser.py       # LQN V5 text format parser
+│   ├── busy_wait.c         # C extension for GIL-releasing CPU busy-wait
+│   └── requirements.txt    # Python dependencies
+├── tools/
+│   └── lqn_compiler.py     # LQN-to-K8s manifest compiler
+├── docker/
+│   ├── Dockerfile          # Multi-stage build (gcc → python:3.12-slim)
+│   └── entrypoint.sh       # Gunicorn launcher
+├── kubernetes/
+│   ├── base/               # Generic deployment + service templates
+│   └── examples/           # Ready-to-use topologies (2-tier, chain, choice)
+├── tests/                  # pytest test suite (171 tests)
+│   ├── unit/               # Parser, compiler, engine, trace validation
+│   ├── e2e/                # K8s deployment tests
+│   └── helpers/            # Trace validator utility
+└── test/
+    └── lqn-groundtruth/    # Reference LQN models
 ```
-
-- `/src`: Contains the core Python application (`app.py`) built with Flask and its dependencies (`requirements.txt`).
-- `/docker`: Contains the `Dockerfile` used to build the container image and the `entrypoint.sh` script that starts the Gunicorn server.
-- `/kubernetes`: Contains all YAML manifests.
-  - `/base`: A generic template for deploying a single instance of the service.
-  - `/examples`: Ready-to-use examples of complex topologies (e.g., 2-tier, probabilistic routing).
 
 ## How to Use It: Creating Your Own Topology
 
@@ -205,24 +215,49 @@ This microservice implements **LQN (Layered Queueing Network) semantic complianc
 
 ### Key Features
 
-- **Process Isolation**: Asynchronous calls (`ASYNC` type) are executed in completely separate processes
-- **Zero Interference**: Async calls do not compete for CPU, memory, or HTTP connection resources with the main service
+- **Worker-Isolated Thread Pool**: Asynchronous calls (`ASYNC` type) are executed via a dedicated `ThreadPoolExecutor` per Gunicorn worker
+- **Dedicated HTTP Session**: Async calls use a separate `requests.Session` with independent connection pooling
 - **True "Send-No-Reply"**: Implements genuine fire-and-forget semantics as defined in LQN theory
 - **Accurate Metrics**: CPU timing and throughput measurements exclude async call overhead
 
 ### Technical Implementation
 
-- **Main Process**: Handles synchronous calls and core service logic using shared HTTP session
-- **Isolated Processes**: Each async call spawns a separate Python process with independent resources
-- **No Blocking**: The main process continues immediately after delegating async calls
-- **Resource Separation**: Async processes use dedicated HTTP sessions and connection pools
+- **Main Thread**: Handles synchronous calls and core service logic using shared HTTP session
+- **Async Thread Pool**: Each Gunicorn worker has its own `ThreadPoolExecutor` (10 threads) for async delegation
+- **No Blocking**: The main thread continues immediately after submitting async calls
+- **Resource Separation**: Async threads use a dedicated HTTP session (separate connection pool, no retries)
 
 ### Response Status Codes
 
 - **Synchronous calls**: Return actual HTTP status codes (e.g., `200`, `404`, `500`)
-- **Asynchronous calls**: Return `"async_delegated"` to indicate successful delegation to isolated process
+- **Asynchronous calls**: Return `"async_pooled"` to indicate successful submission to the worker thread pool
 
 This architecture ensures that performance measurements and LQN model predictions align accurately with real-world behavior.
+
+## LQN Model Compilation
+
+GMT can be used as a compilation target for LQN (Layered Queueing Network) models. The `tools/lqn_compiler.py` CLI reads a `.lqn` file and generates Kubernetes manifests automatically.
+
+```bash
+# Generate K8s manifests from an LQN model
+python tools/lqn_compiler.py model.lqn
+
+# Deploy directly
+python tools/lqn_compiler.py model.lqn | kubectl apply -f -
+
+# Custom image and namespace
+python tools/lqn_compiler.py --image myregistry/gmt:v1 --namespace prod model.lqn
+```
+
+Each non-reference LQN task becomes a Deployment + Service. The compiler resolves call targets to K8s DNS names and serializes activity graphs (AND-fork/join, OR-fork, sequences, reply semantics) as `LQN_TASK_CONFIG` JSON environment variables.
+
+### LQN-Specific Environment Variables
+
+| Variable | Description |
+|---|---|
+| `LQN_TASK_CONFIG` | JSON-encoded task fragment with entries, activities, and activity graph |
+| `LQN_DRY_RUN` | Set to `1` to skip CPU work and HTTP calls (instant execution for testing) |
+| `LQN_TRACE` | Set to `1` to include structured execution trace in HTTP responses |
 
 ## Author
 Roberto Pizziol
