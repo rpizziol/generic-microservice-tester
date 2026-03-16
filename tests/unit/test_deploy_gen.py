@@ -78,3 +78,26 @@ class TestScriptContent:
     def test_custom_image(self) -> None:
         s = generate_deploy_script(MODEL, image="myregistry/gmt:v2")
         assert "myregistry/gmt:v2" in s
+
+
+class TestOtelCompliance:
+    """OTEL-specific content in generated deploy script."""
+
+    def test_observability_check(self, script: str) -> None:
+        assert "kubectl get namespace observability" in script
+
+    def test_observability_warning_message(self, script: str) -> None:
+        assert "OTEL tracing will not work" in script
+
+    def test_instrumentation_cr(self, script: str) -> None:
+        assert "kind: Instrumentation" in script
+
+    def test_instrumentation_cr_has_python(self, script: str) -> None:
+        assert "autoinstrumentation-python" in script
+
+    def test_instrumentation_cr_has_endpoint(self, script: str) -> None:
+        assert "otel-collector.observability:4317" in script
+
+    def test_nodeport_propagated(self) -> None:
+        s = generate_deploy_script(MODEL, node_port=30089)
+        assert "nodePort: 30089" in s
