@@ -1,0 +1,33 @@
+[project]
+name = "gmt"
+version = "0.1.0"
+description = "Generic Microservice Tester — LQN-to-K8s compilation target"
+requires-python = ">=3.10"
+# CLI tools have no external dependencies (stdlib only).
+# Runtime deps (Flask, gunicorn, etc.) are in src/requirements.txt for Docker.
+dependencies = []
+
+[project.optional-dependencies]
+runtime = [
+    "Flask==2.2.2",
+    "requests==2.28.1",
+    "gunicorn==21.2.0",
+    "Werkzeug==2.3.8",
+    "psutil>=5.9.0",
+    "numpy>=1.21.0",
+]
+
+[project.scripts]
+lqn-compile = "gmt.tools.lqn_compiler:main"
+lqsim-run = "gmt.tools.lqsim_runner:main"
+
+[tool.setuptools.package-dir]
+"gmt" = "src"
+"gmt.tools" = "tools"
+
+[tool.setuptools]
+packages = ["gmt", "gmt.tools"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"

@@ -18,10 +18,12 @@ import json
 import sys
 from pathlib import Path
 
-# Add src/ to path for lqn_parser import
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from lqn_parser import LqnModel, LqnTask, parse_lqn_file
+try:
+    from gmt.lqn_parser import LqnModel, LqnTask, parse_lqn_file
+except ImportError:
+    # Fallback for running directly without pip install
+    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    from lqn_parser import LqnModel, LqnTask, parse_lqn_file
 
 
 def task_to_k8s_name(task_name: str) -> str:
