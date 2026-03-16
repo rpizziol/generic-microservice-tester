@@ -167,17 +167,60 @@ def find_entry_point_task(model: LqnModel) -> str | None:
     """Find the non-reference task called by the reference task (entry point).
 
     Returns the K8s-safe name of the first task whose entry is called
-    by the reference task's sync calls. Returns None if no reference task.
+    by the reference task's sync calls. Handles both phase-based and
+    activity-based entries (walks the activity graph via DFS).
     """
     for task in model.tasks:
         if not task.is_reference:
             continue
+        # Try phase-based calls first
         for entry in task.entries:
             for target_entry in entry.phase_sync_calls or {}:
                 result = resolve_call_target(model, target_entry)
                 if result:
-                    svc_name = result[0].removesuffix("-svc")
-                    return svc_name
+                    return result[0].removesuffix("-svc")
+
+        # Try activity-based calls (DFS over activity graph)
+        visited: set[str] = set()
+
+        def _dfs(activity_name: str) -> str | None:
+            if activity_name in visited or activity_name not in task.activities:
+                return None
+            visited.add(activity_name)
+            act = task.activities[activity_name]
+            for target_entry, _ in act.sync_calls:
+                result = resolve_call_target(model, target_entry)
+                if result:
+                    return result[0].removesuffix("-svc")
+            # Follow graph edges
+            graph = task.activity_graph
+            if not graph:
+                return None
+            for src, dst in graph.sequences:
+                if src == activity_name:
+                    found = _dfs(dst)
+                    if found:
+                        return found
+            for src, branches in graph.or_forks:
+                if src == activity_name:
+                    for _, name in branches:
+                        found = _dfs(name)
+                        if found:
+                            return found
+            for src, branches in graph.and_forks:
+                if src == activity_name:
+                    for b in branches:
+                        found = _dfs(b)
+                        if found:
+                            return found
+            return None
+
+        for entry in task.entries:
+            if entry.start_activity:
+                found = _dfs(entry.start_activity)
+                if found:
+                    return found
+
     return None
 
 
