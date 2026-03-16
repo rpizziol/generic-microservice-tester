@@ -84,6 +84,32 @@ class TestMultiEntryModel:
         assert "http://tfileserver-svc/read" in source
 
 
+class TestActivityBasedRefTask:
+    """lqn01-5f.lqn: Task0 has activity-based entry calling gw1 via activity graph."""
+
+    LQN01_PATH = Path("/Users/emilio-imt/git/TLG/tests/lqntest_model/lqn01-5f.lqn")
+
+    @pytest.fixture()
+    def source(self) -> str:
+        if not self.LQN01_PATH.exists():
+            pytest.skip(f"Model not found: {self.LQN01_PATH}")
+        model = parse_lqn_file(str(self.LQN01_PATH))
+        return generate_locustfile(model)
+
+    def test_generates_valid_python(self, source: str) -> None:
+        compile(source, "<test>", "exec")
+
+    def test_no_pass_in_cycle(self, source: str) -> None:
+        """Must NOT generate 'pass' — must make actual HTTP calls."""
+        assert "pass" not in source
+
+    def test_calls_gw1_entry(self, source: str) -> None:
+        assert "taskgw1-svc/gw1" in source
+
+    def test_host_resolved(self, source: str) -> None:
+        assert "taskgw1-svc" in source
+
+
 class TestEdgeCases:
     """Edge cases and error handling."""
 

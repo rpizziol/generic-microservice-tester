@@ -253,3 +253,11 @@ class TestFindEntryPoint:
 
     def test_finds_correct_task_template(self, model):
         assert find_entry_point_task(model) == "tserver"
+
+    def test_finds_correct_task_activity_based(self):
+        """lqn01-5f: Task0 calls gw1 via activity graph → entry point = taskgw1."""
+        lqn_path = Path("/Users/emilio-imt/git/TLG/tests/lqntest_model/lqn01-5f.lqn")
+        if not lqn_path.exists():
+            pytest.skip(f"Model not found: {lqn_path}")
+        m = parse_lqn_file(str(lqn_path))
+        assert find_entry_point_task(m) == "taskgw1"

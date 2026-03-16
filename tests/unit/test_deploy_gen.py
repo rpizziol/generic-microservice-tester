@@ -18,7 +18,14 @@ MODEL = str(GROUNDTRUTH / "validation-model.lqn")
 
 @pytest.fixture()
 def script() -> str:
-    return generate_deploy_script(MODEL)
+    script, _locustfile = generate_deploy_script(MODEL)
+    return script
+
+
+@pytest.fixture()
+def locustfile_content() -> str:
+    _script, locustfile = generate_deploy_script(MODEL)
+    return locustfile
 
 
 class TestBashValidity:
@@ -49,7 +56,7 @@ class TestScriptContent:
         assert 'NAMESPACE="gmt-validation-model"' in script
 
     def test_custom_namespace(self) -> None:
-        s = generate_deploy_script(MODEL, namespace="my-ns")
+        s, _ = generate_deploy_script(MODEL, namespace="my-ns")
         assert 'NAMESPACE="my-ns"' in s
 
     def test_contains_k8s_manifests(self, script: str) -> None:
@@ -76,7 +83,7 @@ class TestScriptContent:
         assert "${1:-1}" in script
 
     def test_custom_image(self) -> None:
-        s = generate_deploy_script(MODEL, image="myregistry/gmt:v2")
+        s, _ = generate_deploy_script(MODEL, image="myregistry/gmt:v2")
         assert "myregistry/gmt:v2" in s
 
 
@@ -86,8 +93,10 @@ class TestOtelCompliance:
     def test_observability_check(self, script: str) -> None:
         assert "kubectl get namespace observability" in script
 
-    def test_observability_warning_message(self, script: str) -> None:
-        assert "OTEL tracing will not work" in script
+    def test_observability_error_exits(self, script: str) -> None:
+        """Observability check must ERROR + exit 1, not just warn."""
+        assert "exit 1" in script
+        assert "ERROR" in script
 
     def test_instrumentation_cr(self, script: str) -> None:
         assert "kind: Instrumentation" in script
@@ -99,5 +108,15 @@ class TestOtelCompliance:
         assert "otel-collector.observability:4317" in script
 
     def test_nodeport_propagated(self) -> None:
-        s = generate_deploy_script(MODEL, node_port=30089)
+        s, _ = generate_deploy_script(MODEL, node_port=30089)
         assert "nodePort: 30089" in s
+
+    def test_locustfile_separate_file(self, locustfile_content: str) -> None:
+        """Locustfile should be returned as separate content, not inline."""
+        assert "from locust import" in locustfile_content
+        assert "LqnClient" in locustfile_content
+
+    def test_deploy_uses_from_file(self, script: str) -> None:
+        """ConfigMap should use --from-file, not --from-literal."""
+        assert "--from-file" in script
+        assert "--from-literal" not in script
